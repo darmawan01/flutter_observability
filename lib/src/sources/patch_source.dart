@@ -22,6 +22,7 @@ void recordPatchEvent(Map<dynamic, dynamic> event) {
       if (event['patchNumber'] != null) 'patch.number': event['patchNumber'],
       if (event['installId'] != null) 'device.id': event['installId'],
       if (event['channel'] != null) 'patch.channel': event['channel'],
+      if (ok != null) 'patch.ok': ok,
       if (event['error'] != null) 'patch.error': event['error'].toString(),
       if (event['message'] != null) 'patch.message': event['message'],
     },
