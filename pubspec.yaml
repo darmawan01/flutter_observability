@@ -1,0 +1,24 @@
+name: flutter_observability
+description: >
+  Generic, backend-agnostic observability for Flutter — errors, events, spans,
+  and metrics through a pluggable exporter interface. Ships HTTP-JSON, OTLP
+  (Grafana/SigNoz/any OTel backend), and console exporters. Instrument once,
+  send anywhere.
+version: 0.1.0
+repository: https://github.com/darmawan01/flutter_observability
+
+environment:
+  sdk: ^3.0.0
+  flutter: ">=3.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  http: ^1.2.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+
+flutter:
