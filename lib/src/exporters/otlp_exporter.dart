@@ -6,14 +6,20 @@ import '../exporter.dart';
 import '../resource.dart';
 import '../signal.dart';
 
-/// Exports signals as OpenTelemetry (OTLP/HTTP + JSON) to any OTel-compatible
-/// backend — an OTel Collector, Grafana (Tempo/Loki/Mimir), SigNoz, Datadog,
-/// Honeycomb, … Non-span signals become **logs**; spans become **traces**.
+/// Exports signals as OpenTelemetry (OTLP/HTTP + JSON). Non-span signals become
+/// **logs**; spans become **traces**.
 ///
-/// [endpoint] is the OTLP base (e.g. `http://collector:4318` or a Grafana Cloud
-/// OTLP URL); logs go to `<base>/v1/logs`, traces to `<base>/v1/traces`.
+/// Point it at any OTLP receiver:
+/// * an all-in-one `endpoint` (an OTel Collector / Grafana Alloy / otel-lgtm) —
+///   logs go to `<endpoint>/v1/logs`, traces to `<endpoint>/v1/traces`; or
+/// * **separate** receivers via [logsUrl] / [tracesUrl] (e.g. traces straight to
+///   Grafana **Tempo**'s OTLP endpoint, logs to **Loki**'s `/otlp/v1/logs`).
+///
+/// Set [logs] or [traces] to false to disable a signal class (e.g. traces-only
+/// into Tempo so it doesn't try to POST logs).
 class OtlpExporter extends Exporter {
-  final String endpoint;
+  final String? logsUrl;
+  final String? tracesUrl;
   final Map<String, String> headers;
   final Duration timeout;
   final String scopeName;
@@ -21,31 +27,45 @@ class OtlpExporter extends Exporter {
   final bool _ownsClient;
 
   OtlpExporter({
-    required String endpoint,
+    String? endpoint,
+    String? logsUrl,
+    String? tracesUrl,
+    bool logs = true,
+    bool traces = true,
     Map<String, String>? headers,
     this.timeout = const Duration(seconds: 10),
     this.scopeName = 'flutter_observability',
     http.Client? client,
-  })  : endpoint = endpoint.replaceAll(RegExp(r'/+$'), ''),
+  })  : logsUrl = _resolve(logs, logsUrl, endpoint, '/v1/logs'),
+        tracesUrl = _resolve(traces, tracesUrl, endpoint, '/v1/traces'),
         headers = {'content-type': 'application/json', ...?headers},
         _client = client ?? http.Client(),
         _ownsClient = client == null;
 
+  static String? _resolve(bool enabled, String? explicit, String? base, String path) {
+    if (!enabled) return null;
+    if (explicit != null) return explicit;
+    if (base != null) return '${base.replaceAll(RegExp(r'/+$'), '')}$path';
+    return null;
+  }
+
   @override
   Future<bool> export(List<Signal> batch, Resource resource) async {
-    final logs = batch.where((s) => s.kind != SignalKind.span).toList(growable: false);
-    final spans = batch.where((s) => s.kind == SignalKind.span).toList(growable: false);
+    final logSignals = batch.where((s) => s.kind != SignalKind.span).toList(growable: false);
+    final spanSignals = batch.where((s) => s.kind == SignalKind.span).toList(growable: false);
     var ok = true;
-    if (logs.isNotEmpty) ok = await _post('/v1/logs', buildLogsPayload(logs, resource)) && ok;
-    if (spans.isNotEmpty) ok = await _post('/v1/traces', buildTracesPayload(spans, resource)) && ok;
+    if (logsUrl != null && logSignals.isNotEmpty) {
+      ok = await _post(logsUrl!, buildLogsPayload(logSignals, resource)) && ok;
+    }
+    if (tracesUrl != null && spanSignals.isNotEmpty) {
+      ok = await _post(tracesUrl!, buildTracesPayload(spanSignals, resource)) && ok;
+    }
     return ok;
   }
 
-  Future<bool> _post(String path, Map<String, Object?> payload) async {
+  Future<bool> _post(String url, Map<String, Object?> payload) async {
     try {
-      final res = await _client
-          .post(Uri.parse('$endpoint$path'), headers: headers, body: jsonEncode(payload))
-          .timeout(timeout);
+      final res = await _client.post(Uri.parse(url), headers: headers, body: jsonEncode(payload)).timeout(timeout);
       return res.statusCode >= 200 && res.statusCode < 300;
     } catch (_) {
       return false;

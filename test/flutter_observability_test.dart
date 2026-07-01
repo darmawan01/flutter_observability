@@ -147,6 +147,22 @@ void main() {
       expect((rec['attributes'] as List).any((a) => (a as Map)['key'] == 'exception.message'), isTrue);
     });
 
+    test('traces-only routing (Tempo) posts spans, skips logs', () async {
+      final hits = <String>[];
+      final client = MockClient((req) async {
+        hits.add(req.url.toString());
+        return http.Response('{}', 200);
+      });
+      final tempo = OtlpExporter(tracesUrl: 'https://tempo.example/v1/traces', logs: false, client: client);
+      final now = DateTime.now();
+      final ok = await tempo.export([
+        Signal(kind: SignalKind.event, name: 'e', timestamp: now),
+        Signal(kind: SignalKind.span, name: 'patch.apply', timestamp: now, endTimestamp: now, traceId: 'a' * 32, spanId: 'b' * 16),
+      ], res);
+      expect(ok, isTrue);
+      expect(hits, ['https://tempo.example/v1/traces']); // no /v1/logs call
+    });
+
     test('span signals map to OTLP traces with status', () {
       final now = DateTime.now();
       final p = exp.buildTracesPayload([

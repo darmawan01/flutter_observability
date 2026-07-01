@@ -53,7 +53,7 @@ span.end(ok: true);                              // one trace, start→end→sta
 | Exporter | Sends to | Notes |
 |---|---|---|
 | `HttpJsonExporter` | any JSON endpoint | `{ resource, signals[] }`; drop-in for a console's `/api/telemetry` |
-| `OtlpExporter` | any OTLP/HTTP backend | non-span → OTLP **logs**, spans → OTLP **traces** → Grafana, SigNoz, Datadog… |
+| `OtlpExporter` | any OTLP/HTTP backend | non-span → OTLP **logs**, spans → OTLP **traces**. One `endpoint`, or split `tracesUrl`/`logsUrl` (e.g. straight to Grafana **Tempo** + **Loki**, no collector) |
 | `ConsoleExporter` | `debugPrint` | local dev |
 | *your own* | anywhere | implement `Exporter.export(batch, resource)` |
 
