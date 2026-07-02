@@ -67,6 +67,52 @@ Dependency-free — feed the OTA SDK's event map straight in:
 FlutterPatcher.init(onEvent: (e) => recordPatchEvent(e.toJson()));
 ```
 
+## Durable offline queue
+
+Signals buffered while offline live in an in-memory queue. By default that queue
+is **not** persisted — if the app is killed before the next flush, anything
+queued (including a crash captured on the way down) is lost.
+
+Make it durable by passing a `QueueStore`. The queue is then mirrored to storage
+and **restored on the next launch** (restored signals flush first). Writes are
+debounced and run off the hot path, so `event()` / `captureError()` never block on
+disk.
+
+```dart
+await Observability.init(
+  resource: Resource.app(appId: 'com.acme.app', version: '1.0.0'),
+  exporters: [OtlpExporter(endpoint: '…')],
+  queueStore: SharedPrefsQueueStore(), // survives restarts
+);
+```
+
+The core package stays dependency-free — it ships only the `QueueStore` interface
+and the no-op `InMemoryQueueStore` default. Concrete adapters live outside it so
+you only pull the storage dependency you actually want:
+
+- **shared_preferences** — ready-to-copy adapter in
+  [`example/shared_prefs_queue_store.dart`](example/shared_prefs_queue_store.dart).
+  Good for modest volumes.
+- **sqlite / a file / your own** — implement `QueueStore` (three methods:
+  `load`, `save`, `close`) and serialize with `Signal.toJson` /
+  `Signal.fromJson`. Snapshots are bounded by `maxQueue`, so they stay small.
+
+```dart
+class MyQueueStore extends QueueStore {
+  @override
+  bool get persistent => true;
+  @override
+  Future<List<Signal>> load() async { /* read + Signal.fromJson */ }
+  @override
+  Future<void> save(List<Signal> signals) async { /* Signal.toJson + write */ }
+}
+```
+
+> Persistence is best-effort: a store must never throw into the caller (return an
+> empty list from `load` on a corrupt snapshot). `error` round-trips as its string
+> form and `stackTrace` is dropped — only `toJson`, which is all the exporters
+> read, survives a restart.
+
 ## Design
 
 ```
@@ -84,7 +130,8 @@ sources (errors · events · spans · patch bridge)
 
 ## Roadmap
 
-- Persistent offline queue (survives restarts) behind a `QueueStore` interface.
+- ~~Persistent offline queue (survives restarts) behind a `QueueStore`
+  interface.~~ ✅ done — see [Durable offline queue](#durable-offline-queue).
 - OTLP **metrics** (counters → OTLP sums) and Grafana **Faro** / Sentry exporters.
 - Per-signal exporter cursors (exactly-once instead of at-least-once).
 

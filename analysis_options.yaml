@@ -1,4 +1,10 @@
 include: package:flutter_lints/flutter.yaml
 
+analyzer:
+  exclude:
+    # Reference adapter — depends on shared_preferences, which the core package
+    # deliberately does NOT. Copy it into your app (which adds the dep) to use it.
+    - example/shared_prefs_queue_store.dart
+
 # Additional information about this file can be found at
 # https://dart.dev/guides/language/analysis-options
