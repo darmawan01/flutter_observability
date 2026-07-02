@@ -6,6 +6,7 @@ import 'package:flutter/foundation.dart';
 import 'exporter.dart';
 import 'ids.dart';
 import 'pipeline.dart';
+import 'queue/queue_store.dart';
 import 'resource.dart';
 import 'signal.dart';
 import 'span.dart';
@@ -34,6 +35,18 @@ class Observability {
 
   Observability._(this.resource, this.pipeline, this.sampleRate, this.enabled);
 
+  /// Initialise the singleton.
+  ///
+  /// [exporters] decide where signals go; [sampleRate] head-samples non-error
+  /// signals; batching/flushing are tuned via [batchSize], [maxQueue], and
+  /// [flushInterval].
+  ///
+  /// [queueStore] chooses how the offline buffer is persisted. Defaults to an
+  /// in-memory store (nothing survives a restart). Pass a persistent
+  /// [QueueStore] — e.g. a shared_preferences or sqlite adapter (see
+  /// `example/shared_prefs_queue_store.dart`) — so signals buffered offline
+  /// outlive an app kill. Persisted signals are restored (and flushed first) on
+  /// the next `init`.
   static Future<Observability> init({
     required Resource resource,
     required List<Exporter> exporters,
@@ -43,6 +56,7 @@ class Observability {
     int maxQueue = 1000,
     Duration flushInterval = const Duration(seconds: 10),
     void Function(String message)? onDebug,
+    QueueStore? queueStore,
   }) async {
     final pipeline = Pipeline(
       exporters: exporters,
@@ -51,7 +65,11 @@ class Observability {
       maxQueue: maxQueue,
       flushInterval: flushInterval,
       onDebug: onDebug,
+      store: queueStore,
     );
+    // Restore any signals a previous run persisted (no-op for the in-memory
+    // default) before we start producing new ones.
+    await pipeline.restore();
     return _instance = Observability._(resource, pipeline, sampleRate.clamp(0.0, 1.0).toDouble(), enabled);
   }
 

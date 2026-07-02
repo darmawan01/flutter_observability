@@ -19,12 +19,35 @@ class FakeExporter extends Exporter {
   }
 }
 
-Future<Observability> _init(Exporter e, {double sampleRate = 1.0}) => Observability.init(
+/// A persistent [QueueStore] that keeps the snapshot in a field, so tests can
+/// see what the pipeline mirrored (and preload a "previous run").
+class FakeStore extends QueueStore {
+  List<Signal> persisted;
+  int saves = 0;
+  bool closed = false;
+  FakeStore([List<Signal>? initial]) : persisted = List.of(initial ?? const []);
+
+  @override
+  bool get persistent => true;
+  @override
+  Future<List<Signal>> load() async => List.of(persisted);
+  @override
+  Future<void> save(List<Signal> signals) async {
+    saves++;
+    persisted = List.of(signals);
+  }
+
+  @override
+  Future<void> close() async => closed = true;
+}
+
+Future<Observability> _init(Exporter e, {double sampleRate = 1.0, QueueStore? queueStore}) => Observability.init(
       resource: Resource.app(appId: 'com.test.app', version: '1.0.0', installId: 'dev-1'),
       exporters: [e],
       sampleRate: sampleRate,
       batchSize: 1000, // don't auto-flush; we flush manually
       flushInterval: Duration.zero, // no timer in tests
+      queueStore: queueStore,
     );
 
 void main() {
@@ -82,6 +105,82 @@ void main() {
       await obs.flush();
       expect(fake.received.length, 1); // delivered on retry
       await obs.shutdown();
+    });
+  });
+
+  group('persistent offline queue', () {
+    test('Signal round-trips through toJson/fromJson', () {
+      final s = Signal(
+        kind: SignalKind.span,
+        name: 'patch.apply',
+        timestamp: DateTime.fromMicrosecondsSinceEpoch(1710000000123456),
+        endTimestamp: DateTime.fromMicrosecondsSinceEpoch(1710000000200000),
+        severity: Severity.error,
+        attributes: {'v': '1.2.0', 'n': 5},
+        traceId: 'a' * 32,
+        spanId: 'b' * 16,
+        ok: false,
+        error: 'boom',
+      );
+      final r = Signal.fromJson(s.toJson());
+      expect(r.kind, SignalKind.span);
+      expect(r.name, 'patch.apply');
+      expect(r.timestamp, s.timestamp);
+      expect(r.endTimestamp, s.endTimestamp);
+      expect(r.severity, Severity.error);
+      expect(r.attributes['v'], '1.2.0');
+      expect(r.traceId, 'a' * 32);
+      expect(r.ok, isFalse);
+      expect(r.error, 'boom');
+    });
+
+    test('the default queue store is in-memory and persists nothing', () async {
+      const store = InMemoryQueueStore();
+      expect(store.persistent, isFalse);
+      expect(await store.load(), isEmpty);
+    });
+
+    test('a persistent store is written on add and cleared after a successful flush', () async {
+      final store = FakeStore();
+      final fake = FakeExporter();
+      final obs = await _init(fake, queueStore: store);
+
+      obs.event('persist.me');
+      await Future<void>.delayed(const Duration(milliseconds: 400)); // past the debounce
+      expect(store.persisted.map((s) => s.name), ['persist.me']);
+
+      await obs.flush();
+      await Future<void>.delayed(const Duration(milliseconds: 400));
+      expect(store.persisted, isEmpty); // trimmed once the exporter accepted it
+
+      await obs.shutdown();
+      expect(store.closed, isTrue);
+    });
+
+    test('signals persisted by a previous run are restored and flushed first', () async {
+      final store = FakeStore([
+        Signal(kind: SignalKind.event, name: 'from.disk', timestamp: DateTime.now()),
+      ]);
+      final fake = FakeExporter();
+      final obs = await _init(fake, queueStore: store);
+
+      // No new signals added — restore() should have loaded the persisted one.
+      await obs.flush();
+      expect(fake.received.map((s) => s.name), contains('from.disk'));
+
+      await obs.shutdown();
+    });
+
+    test('a failing exporter keeps persisted signals for the next run', () async {
+      final store = FakeStore();
+      final fake = FakeExporter()..succeed = false;
+      final obs = await _init(fake, queueStore: store);
+
+      obs.event('unsent');
+      await obs.flush(); // export fails, stays queued
+      await obs.shutdown(); // shutdown persists what's left
+
+      expect(store.persisted.map((s) => s.name), ['unsent']);
     });
   });
 

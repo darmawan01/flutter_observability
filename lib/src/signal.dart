@@ -67,7 +67,35 @@ class Signal {
     this.stackTrace,
   }) : attributes = attributes ?? const {};
 
-  /// Neutral JSON — used by the HTTP-JSON exporter and easy to eyeball in logs.
+  /// Rebuild a signal from [toJson] output. Used by a persistent [QueueStore] to
+  /// restore the offline buffer after an app restart.
+  ///
+  /// Note: [error] comes back as its string form and [stackTrace] is dropped —
+  /// only [toJson] survives a round-trip, which is all the exporters read. The
+  /// error's text is preserved in the [error] string.
+  factory Signal.fromJson(Map<String, Object?> json) {
+    final attrs = json['attributes'];
+    return Signal(
+      kind: SignalKind.values.byName(json['kind'] as String),
+      name: (json['name'] as String?) ?? '',
+      severity: Severity.values.byName((json['severity'] as String?) ?? 'info'),
+      timestamp: _timeFromNano(json['timeUnixNano']),
+      endTimestamp: json['endTimeUnixNano'] == null ? null : _timeFromNano(json['endTimeUnixNano']),
+      attributes: attrs is Map ? Map<String, Object?>.from(attrs) : null,
+      traceId: json['traceId'] as String?,
+      spanId: json['spanId'] as String?,
+      parentSpanId: json['parentSpanId'] as String?,
+      ok: json['ok'] as bool?,
+      value: json['value'] as num?,
+      error: json['error'],
+    );
+  }
+
+  static DateTime _timeFromNano(Object? nano) =>
+      DateTime.fromMicrosecondsSinceEpoch(((nano as num?)?.toInt() ?? 0) ~/ 1000);
+
+  /// Neutral JSON — used by the HTTP-JSON exporter, the persistent queue, and
+  /// easy to eyeball in logs. Round-trips through [Signal.fromJson].
   Map<String, Object?> toJson() => {
         'kind': kind.name,
         'name': name,
