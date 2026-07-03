@@ -254,6 +254,76 @@ void main() {
     });
   });
 
+  group('SentryExporter', () {
+    const dsn = 'https://pubkey123@o42.ingest.sentry.io/98765';
+
+    test('derives the envelope URL and auth header from the DSN', () {
+      final exp = SentryExporter(dsn: dsn);
+      expect(exp.envelopeUrl, 'https://o42.ingest.sentry.io/api/98765/envelope/');
+      expect(exp.authHeader, contains('sentry_key=pubkey123'));
+      expect(exp.authHeader, startsWith('Sentry sentry_version=7'));
+    });
+
+    test('rejects a malformed DSN', () {
+      expect(() => SentryExporter(dsn: 'not-a-dsn'), throwsArgumentError);
+    });
+
+    test('builds an envelope: errors → exception events, others → messages', () {
+      final exp = SentryExporter(dsn: dsn);
+      final res = Resource.app(appId: 'com.acme', version: '2.0.0', environment: 'prod');
+      final now = DateTime.now();
+      final body = exp.buildEnvelope([
+        Signal(kind: SignalKind.error, name: 'StateError', timestamp: now, severity: Severity.fatal, error: 'boom', stackTrace: StackTrace.current),
+        Signal(kind: SignalKind.event, name: 'app.started', timestamp: now, attributes: {'cold': true}),
+        Signal(kind: SignalKind.counter, name: 'ignored', timestamp: now, value: 1), // not passed here anyway
+      ], res);
+
+      final lines = body.split('\n');
+      final header = jsonDecode(lines[0]) as Map<String, Object?>;
+      expect(header['dsn'], dsn);
+      expect(header['sent_at'], isA<String>());
+
+      // header + 2 items (each item = header line + payload line) = 5 lines
+      final err = jsonDecode(lines[2]) as Map<String, Object?>;
+      expect(err['level'], 'fatal');
+      expect(err['release'], '2.0.0');
+      expect(err['environment'], 'prod');
+      expect(((err['exception'] as Map)['values'] as List).single, containsPair('value', 'boom'));
+      expect((err['extra'] as Map)['stacktrace'], isA<String>());
+      expect((err['tags'] as Map)['service'], 'com.acme');
+
+      final evt = jsonDecode(lines[4]) as Map<String, Object?>;
+      expect((evt['message'] as Map)['formatted'], 'app.started');
+      expect(evt['level'], 'info');
+    });
+
+    test('export posts the envelope with the right content-type + auth, skips a spans-only batch', () async {
+      final posts = <http.Request>[];
+      final client = MockClient((req) async {
+        posts.add(req);
+        return http.Response('', 200);
+      });
+      final exp = SentryExporter(dsn: dsn, client: client);
+      final res = Resource.app(appId: 'com.acme');
+      final now = DateTime.now();
+
+      final ok = await exp.export([
+        Signal(kind: SignalKind.error, name: 'Err', timestamp: now, error: 'x'),
+      ], res);
+      expect(ok, isTrue);
+      expect(posts.single.url.toString(), 'https://o42.ingest.sentry.io/api/98765/envelope/');
+      expect(posts.single.headers['content-type'], contains('application/x-sentry-envelope'));
+      expect(posts.single.headers['x-sentry-auth'], contains('sentry_key=pubkey123'));
+
+      // A batch with nothing Sentry-shaped makes no HTTP call.
+      final ok2 = await exp.export([
+        Signal(kind: SignalKind.span, name: 's', timestamp: now, endTimestamp: now),
+      ], res);
+      expect(ok2, isTrue);
+      expect(posts.length, 1); // still just the one
+    });
+  });
+
   group('OtlpExporter payloads', () {
     final exp = OtlpExporter(endpoint: 'http://collector:4318/');
     final res = Resource.app(appId: 'com.acme', version: '2.0.0');
