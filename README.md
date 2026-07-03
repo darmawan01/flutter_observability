@@ -57,7 +57,9 @@ span.end(ok: true);                              // one trace, start→end→sta
 | `ConsoleExporter` | `debugPrint` | local dev |
 | *your own* | anywhere | implement `Exporter.export(batch, resource)` |
 
-Pass several at once — they fan out (at-least-once delivery, with retry).
+Pass several at once — they fan out with retry. Delivery is exactly-once per
+exporter within a session: each has its own cursor, so a batch one exporter
+rejects is retried only there, not re-sent to the ones that already took it.
 
 ## OTA bridge (flutter_patcher)
 
@@ -133,6 +135,7 @@ sources (errors · events · spans · patch bridge)
 - ~~Persistent offline queue (survives restarts) behind a `QueueStore`
   interface.~~ ✅ done — see [Durable offline queue](#durable-offline-queue).
 - OTLP **metrics** (counters → OTLP sums) and Grafana **Faro** / Sentry exporters.
-- Per-signal exporter cursors (exactly-once instead of at-least-once).
+- ~~Per-signal exporter cursors (exactly-once instead of at-least-once).~~ ✅ done
+  — a batch is retried only on the exporter that failed it.
 
 Ship with `--split-debug-info` in CI so native stack traces symbolicate.

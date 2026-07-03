@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math';
 
 import 'exporter.dart';
 import 'queue/in_memory_queue.dart';
@@ -15,8 +16,12 @@ import 'signal.dart';
 /// persists nothing; pass a persistent store to keep buffered signals across a
 /// crash/kill. Writes are debounced and run off the hot path.
 ///
-/// Delivery is at-least-once: if one of several exporters fails a batch, the
-/// batch is retried against all of them on the next flush.
+/// Delivery is **exactly-once per exporter within a session**: each exporter has
+/// its own cursor over the queue, so a batch that one exporter rejects is retried
+/// only on that exporter — the ones that already accepted it don't see it again.
+/// A signal leaves the queue once every exporter has acked it. (Across a restart
+/// with a persistent store, cursors reset, so restored signals may be re-sent —
+/// at-least-once — since they weren't fully delivered before the kill.)
 class Pipeline {
   final List<Exporter> exporters;
   final Resource resource;
@@ -33,6 +38,12 @@ class Pipeline {
   final Duration persistDebounce;
 
   final List<Signal> _queue = [];
+
+  /// Per-exporter progress: `_cursor[i]` is how many signals from the front of
+  /// [_queue] exporter `i` has already accepted. A signal is trimmed from the
+  /// front once every cursor has passed it. Parallel to [exporters].
+  late final List<int> _cursor = List<int>.filled(exporters.length, 0);
+
   Timer? _timer;
   bool _flushing = false;
 
@@ -87,10 +98,15 @@ class Pipeline {
   }
 
   /// Drop oldest signals when the queue is over [maxQueue] (backpressure).
+  /// Cursors shift back by whatever was dropped (an exporter that hadn't yet
+  /// acked a dropped signal simply never will — that's the backpressure).
   void _trimOverflow() {
     if (_queue.length > maxQueue) {
       final overflow = _queue.length - maxQueue;
       _queue.removeRange(0, overflow);
+      for (var i = 0; i < _cursor.length; i++) {
+        _cursor[i] = max(0, _cursor[i] - overflow);
+      }
       dropped += overflow;
     }
   }
@@ -102,25 +118,39 @@ class Pipeline {
     _flushing = true;
     var removedAny = false;
     try {
-      while (_queue.isNotEmpty) {
-        final batch = _queue.take(batchSize).toList(growable: false);
-        var anyFail = false;
-        for (final e in exporters) {
+      // Advance each exporter's own cursor. An exporter that fails a batch keeps
+      // its cursor put and retries just that batch next time; exporters that
+      // succeeded move on, so nobody re-receives what they already accepted.
+      var madeProgress = true;
+      while (madeProgress) {
+        madeProgress = false;
+        for (var i = 0; i < exporters.length; i++) {
+          if (_cursor[i] >= _queue.length) continue; // caught up
+          final end = min(_queue.length, _cursor[i] + batchSize);
+          final batch = _queue.sublist(_cursor[i], end);
           bool ok;
           try {
-            ok = await e.export(batch, resource);
+            ok = await exporters[i].export(batch, resource);
           } catch (err) {
             ok = false;
-            onDebug?.call('exporter ${e.runtimeType} threw: $err');
+            onDebug?.call('exporter ${exporters[i].runtimeType} threw: $err');
           }
-          if (!ok) anyFail = true;
+          if (ok) {
+            _cursor[i] = end;
+            madeProgress = true;
+          } else {
+            onDebug?.call('exporter ${exporters[i].runtimeType} deferred ${batch.length} signals for retry');
+          }
         }
-        if (anyFail) {
-          onDebug?.call('flush deferred ${batch.length} signals for retry');
-          break; // keep the batch queued; retry on the next flush
+        // Trim the front prefix every exporter has now acked.
+        final done = _cursor.reduce(min);
+        if (done > 0) {
+          _queue.removeRange(0, done);
+          for (var i = 0; i < _cursor.length; i++) {
+            _cursor[i] -= done;
+          }
+          removedAny = true;
         }
-        _queue.removeRange(0, batch.length);
-        removedAny = true;
       }
     } finally {
       _flushing = false;
