@@ -324,6 +324,69 @@ void main() {
     });
   });
 
+  group('FaroExporter', () {
+    test('maps signals into the Faro body: exceptions / measurements / events / logs + meta', () {
+      final exp = FaroExporter(url: 'https://faro.example/collect/app-key');
+      final res = Resource.app(appId: 'com.acme', version: '2.0.0', installId: 'sess-1', environment: 'prod');
+      final now = DateTime.now();
+      final body = exp.buildBody([
+        Signal(kind: SignalKind.error, name: 'StateError', timestamp: now, severity: Severity.fatal, error: 'boom', stackTrace: StackTrace.current),
+        Signal(kind: SignalKind.counter, name: 'applies', timestamp: now, value: 3),
+        Signal(kind: SignalKind.event, name: 'app.started', timestamp: now, attributes: {'cold': true}),
+        Signal(kind: SignalKind.breadcrumb, name: 'tapped pay', timestamp: now, severity: Severity.debug),
+        Signal(kind: SignalKind.span, name: 'ignored.span', timestamp: now, endTimestamp: now),
+      ], res);
+
+      // meta from the resource
+      final app = (body['meta'] as Map)['app'] as Map;
+      expect(app['name'], 'com.acme');
+      expect(app['version'], '2.0.0');
+      expect(app['environment'], 'prod');
+      expect(((body['meta'] as Map)['session'] as Map)['id'], 'sess-1');
+
+      final exc = (body['exceptions'] as List).single as Map;
+      expect(exc['type'], 'StateError');
+      expect(exc['value'], 'boom');
+      expect(exc['fatal'], isTrue);
+      expect((exc['context'] as Map)['stacktrace'], isA<String>());
+
+      final meas = (body['measurements'] as List).single as Map;
+      expect(meas['type'], 'applies');
+      expect((meas['values'] as Map)['applies'], 3);
+
+      final evt = (body['events'] as List).single as Map;
+      expect(evt['name'], 'app.started');
+      expect((evt['attributes'] as Map)['cold'], 'true'); // stringified
+
+      final log = (body['logs'] as List).single as Map;
+      expect(log['message'], 'tapped pay');
+      expect(log['level'], 'debug');
+
+      expect(body.containsKey('traces'), isFalse); // spans skipped
+    });
+
+    test('export posts JSON to the collect URL and skips a spans-only batch', () async {
+      final posts = <http.Request>[];
+      final client = MockClient((req) async {
+        posts.add(req);
+        return http.Response('', 202);
+      });
+      final exp = FaroExporter(url: 'https://faro.example/collect/app-key', apiKey: 'secret', client: client);
+      final res = Resource.app(appId: 'com.acme');
+      final now = DateTime.now();
+
+      final ok = await exp.export([Signal(kind: SignalKind.event, name: 'e', timestamp: now)], res);
+      expect(ok, isTrue);
+      expect(posts.single.url.toString(), 'https://faro.example/collect/app-key');
+      expect(posts.single.headers['content-type'], contains('application/json'));
+      expect(posts.single.headers['x-api-key'], 'secret');
+
+      final ok2 = await exp.export([Signal(kind: SignalKind.span, name: 's', timestamp: now, endTimestamp: now)], res);
+      expect(ok2, isTrue);
+      expect(posts.length, 1); // spans-only → no POST
+    });
+  });
+
   group('OtlpExporter payloads', () {
     final exp = OtlpExporter(endpoint: 'http://collector:4318/');
     final res = Resource.app(appId: 'com.acme', version: '2.0.0');

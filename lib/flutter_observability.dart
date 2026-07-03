@@ -21,4 +21,5 @@ export 'src/exporters/console_exporter.dart';
 export 'src/exporters/http_json_exporter.dart';
 export 'src/exporters/otlp_exporter.dart';
 export 'src/exporters/sentry_exporter.dart';
+export 'src/exporters/faro_exporter.dart';
 export 'src/sources/patch_source.dart';
