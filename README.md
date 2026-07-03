@@ -55,6 +55,7 @@ span.end(ok: true);                              // one trace, start→end→sta
 | `HttpJsonExporter` | any JSON endpoint | `{ resource, signals[] }`; drop-in for a console's `/api/telemetry` |
 | `OtlpExporter` | any OTLP/HTTP backend | counters → OTLP **metrics** (monotonic sums), spans → OTLP **traces**, the rest → OTLP **logs**. One `endpoint`, or split `metricsUrl`/`tracesUrl`/`logsUrl` (e.g. straight to **Prometheus** + Grafana **Tempo** + **Loki**, no collector) |
 | `SentryExporter` | Sentry | give it a project **DSN**; errors → Sentry *exceptions*, events/breadcrumbs → *messages*. `release`/`environment` default from the `Resource` |
+| `FaroExporter` | Grafana **Faro** (Alloy / Cloud Frontend Observability) | errors → *exceptions*, counters → *measurements*, events → *events*, breadcrumbs → *logs*; `meta.app` from the `Resource` |
 | `ConsoleExporter` | `debugPrint` | local dev |
 | *your own* | anywhere | implement `Exporter.export(batch, resource)` |
 
@@ -137,7 +138,8 @@ sources (errors · events · spans · patch bridge)
   interface.~~ ✅ done — see [Durable offline queue](#durable-offline-queue).
 - ~~OTLP **metrics** (counters → OTLP sums)~~ ✅ done — counters export to
   `/v1/metrics` as monotonic delta sums.
-- ~~Sentry exporter~~ ✅ done — `SentryExporter(dsn: …)`. Grafana **Faro** next.
+- ~~Sentry exporter~~ ✅ done — `SentryExporter(dsn: …)`.
+- ~~Grafana **Faro** exporter~~ ✅ done — `FaroExporter(url: …)`.
 - ~~Per-signal exporter cursors (exactly-once instead of at-least-once).~~ ✅ done
   — a batch is retried only on the exporter that failed it.
 
