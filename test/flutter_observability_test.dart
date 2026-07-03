@@ -106,6 +106,30 @@ void main() {
       expect(fake.received.length, 1); // delivered on retry
       await obs.shutdown();
     });
+
+    test('a failed batch is retried only on the exporter that failed (exactly-once per exporter)', () async {
+      final a = FakeExporter();
+      final b = FakeExporter()..succeed = false;
+      final obs = await Observability.init(
+        resource: Resource.app(appId: 'com.test.app', version: '1.0.0'),
+        exporters: [a, b],
+        batchSize: 1000,
+        flushInterval: Duration.zero,
+      );
+
+      obs.event('deliver.once');
+      await obs.flush(); // a accepts, b fails
+      expect(a.received.length, 1);
+      expect(b.received, isEmpty);
+      final aCallsAfterFirst = a.calls;
+
+      b.succeed = true;
+      await obs.flush(); // only b should be retried
+      expect(a.received.length, 1); // NOT re-sent to a
+      expect(a.calls, aCallsAfterFirst); // a wasn't even called again
+      expect(b.received.length, 1); // b caught up
+      await obs.shutdown();
+    });
   });
 
   group('persistent offline queue', () {
