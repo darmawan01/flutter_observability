@@ -286,6 +286,47 @@ void main() {
       expect(hits, ['https://tempo.example/v1/traces']); // no /v1/logs call
     });
 
+    test('counters map to OTLP metrics as monotonic delta sums, grouped by name', () {
+      final now = DateTime.now();
+      final p = exp.buildMetricsPayload([
+        Signal(kind: SignalKind.counter, name: 'applies', timestamp: now, value: 1, attributes: {'channel': 'stable'}),
+        Signal(kind: SignalKind.counter, name: 'applies', timestamp: now, value: 2),
+        Signal(kind: SignalKind.counter, name: 'errors', timestamp: now, value: 1.5),
+      ], res);
+
+      final metrics = ((((p['resourceMetrics'] as List).single as Map)['scopeMetrics'] as List).single as Map)['metrics'] as List;
+      expect(metrics.length, 2); // grouped: applies, errors
+
+      final applies = metrics.firstWhere((m) => (m as Map)['name'] == 'applies') as Map;
+      final sum = applies['sum'] as Map;
+      expect(sum['isMonotonic'], isTrue);
+      expect(sum['aggregationTemporality'], 2); // DELTA
+      final points = sum['dataPoints'] as List;
+      expect(points.length, 2);
+      expect((points.first as Map)['asInt'], '1'); // ints serialize as strings
+      expect((points.first as Map)['timeUnixNano'], isA<String>());
+
+      final errors = metrics.firstWhere((m) => (m as Map)['name'] == 'errors') as Map;
+      expect((((errors['sum'] as Map)['dataPoints'] as List).single as Map)['asDouble'], 1.5);
+    });
+
+    test('export routes counters to /v1/metrics, not /v1/logs', () async {
+      final hits = <String>[];
+      final client = MockClient((req) async {
+        hits.add(req.url.toString());
+        return http.Response('{}', 200);
+      });
+      final otlp = OtlpExporter(endpoint: 'https://otel.example', client: client);
+      final now = DateTime.now();
+      final ok = await otlp.export([
+        Signal(kind: SignalKind.counter, name: 'applies', timestamp: now, value: 1),
+        Signal(kind: SignalKind.event, name: 'app.started', timestamp: now),
+      ], res);
+      expect(ok, isTrue);
+      expect(hits, containsAll(['https://otel.example/v1/metrics', 'https://otel.example/v1/logs']));
+      expect(hits, isNot(contains('https://otel.example/v1/traces'))); // no spans in the batch
+    });
+
     test('span signals map to OTLP traces with status', () {
       final now = DateTime.now();
       final p = exp.buildTracesPayload([
