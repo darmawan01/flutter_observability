@@ -11,6 +11,8 @@
 library;
 
 export 'src/observability.dart';
+export 'src/observability_route_observer.dart';
+export 'src/redactor.dart';
 export 'src/span.dart';
 export 'src/signal.dart' show Signal, SignalKind, Severity;
 export 'src/resource.dart';

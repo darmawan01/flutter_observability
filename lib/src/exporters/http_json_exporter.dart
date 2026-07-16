@@ -12,6 +12,13 @@ import '../signal.dart';
 class HttpJsonExporter extends Exporter {
   final Uri endpoint;
   final Map<String, String> headers;
+
+  /// Optional per-request headers, resolved fresh on every export. Use for
+  /// values that change over time — e.g. a bearer token that rotates — so you
+  /// don't have to bake a stale value into [headers] or wrap a custom [client].
+  /// Resolved values are merged over [headers]. If it throws, the batch is
+  /// treated as a (retryable) failure.
+  final Future<Map<String, String>> Function()? headersProvider;
   final Duration timeout;
   final http.Client _client;
   final bool _ownsClient;
@@ -19,6 +26,7 @@ class HttpJsonExporter extends Exporter {
   HttpJsonExporter({
     required String url,
     Map<String, String>? headers,
+    this.headersProvider,
     this.timeout = const Duration(seconds: 10),
     http.Client? client,
   })  : endpoint = Uri.parse(url),
@@ -33,7 +41,12 @@ class HttpJsonExporter extends Exporter {
       'signals': batch.map((s) => s.toJson()).toList(),
     });
     try {
-      final res = await _client.post(endpoint, headers: headers, body: body).timeout(timeout);
+      final dynamicHeaders = headersProvider == null
+          ? const <String, String>{}
+          : await headersProvider!();
+      final res = await _client
+          .post(endpoint, headers: {...headers, ...dynamicHeaders}, body: body)
+          .timeout(timeout);
       return res.statusCode >= 200 && res.statusCode < 300;
     } catch (_) {
       return false; // retryable

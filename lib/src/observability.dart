@@ -122,6 +122,30 @@ class Observability {
     );
   }
 
+  /// Time an async operation as a span. Returns [body]'s result; on throw it
+  /// marks the span errored and rethrows. Convenience over [startSpan] +
+  /// [Span.end] — slow operations surface as span latency in your backend.
+  ///
+  /// ```dart
+  /// final rows = await Observability.instance.trace('db.query', () => db.query(sql));
+  /// ```
+  Future<T> trace<T>(
+    String name,
+    Future<T> Function() body, {
+    Map<String, Object?>? attributes,
+    Span? parent,
+  }) async {
+    final span = startSpan(name, attributes: attributes, parent: parent);
+    try {
+      final result = await body();
+      span.end();
+      return result;
+    } catch (e) {
+      span.end(ok: false, attributes: {'error': e.toString()});
+      rethrow;
+    }
+  }
+
   /// Called by [Span.end]; not for direct use.
   void recordSpan(Span span, {required bool ok, required DateTime end}) {
     _emit(Signal(
