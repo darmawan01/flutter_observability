@@ -98,4 +98,38 @@ void main() {
       expect(exporter.headers['content-type'], 'application/json');
     });
   });
+
+  group('OtlpExporter', () {
+    test('headersProvider is exposed; endpoint resolves the /v1 paths', () {
+      final exporter = OtlpExporter(
+        endpoint: 'https://gw.test/aware3/otlp',
+        headersProvider: () async => {'authorization': 'Bearer x'},
+      );
+      expect(exporter.headersProvider, isNotNull);
+      expect(exporter.tracesUrl, 'https://gw.test/aware3/otlp/v1/traces');
+      expect(exporter.metricsUrl, 'https://gw.test/aware3/otlp/v1/metrics');
+      expect(exporter.logsUrl, 'https://gw.test/aware3/otlp/v1/logs');
+    });
+
+    test('preserves trace/span ids verbatim in the OTLP payload', () {
+      final exporter = OtlpExporter(endpoint: 'https://x.test');
+      final payload = exporter.buildTracesPayload([
+        Signal.fromJson({
+          'kind': 'span',
+          'name': 'op',
+          'severity': 'info',
+          'timeUnixNano': 1700000000000000000,
+          'endTimeUnixNano': 1700000001000000000,
+          'traceId': '0af7651916cd43dd8448eb211c80319c',
+          'spanId': 'b7ad6b7169203331',
+          'ok': true,
+        }),
+      ], const Resource({'service.name': 't'}));
+      final span = (((payload['resourceSpans'] as List).first
+          as Map)['scopeSpans'] as List).first as Map;
+      final s = (span['spans'] as List).first as Map;
+      expect(s['traceId'], '0af7651916cd43dd8448eb211c80319c');
+      expect(s['spanId'], 'b7ad6b7169203331'); // verbatim — no regeneration
+    });
+  });
 }

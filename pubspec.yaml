@@ -4,7 +4,7 @@ description: >
   and metrics through a pluggable exporter interface. Ships HTTP-JSON, OTLP
   (Grafana/SigNoz/any OTel backend), and console exporters. Instrument once,
   send anywhere.
-version: 0.2.0
+version: 0.3.0
 repository: https://github.com/darmawan01/flutter_observability
 
 environment:

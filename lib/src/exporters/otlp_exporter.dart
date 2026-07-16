@@ -25,6 +25,12 @@ class OtlpExporter extends Exporter {
   final String? tracesUrl;
   final String? metricsUrl;
   final Map<String, String> headers;
+
+  /// Optional per-request headers, resolved fresh on every export and merged over
+  /// [headers]. Use for a rotating auth token (e.g. forwarding OTLP through an
+  /// authenticated gateway) so you don't bake a stale value in. If it throws, the
+  /// batch is treated as a (retryable) failure.
+  final Future<Map<String, String>> Function()? headersProvider;
   final Duration timeout;
   final String scopeName;
   final http.Client _client;
@@ -39,6 +45,7 @@ class OtlpExporter extends Exporter {
     bool traces = true,
     bool metrics = true,
     Map<String, String>? headers,
+    this.headersProvider,
     this.timeout = const Duration(seconds: 10),
     this.scopeName = 'flutter_observability',
     http.Client? client,
@@ -79,7 +86,11 @@ class OtlpExporter extends Exporter {
 
   Future<bool> _post(String url, Map<String, Object?> payload) async {
     try {
-      final res = await _client.post(Uri.parse(url), headers: headers, body: jsonEncode(payload)).timeout(timeout);
+      final dynamicHeaders =
+          headersProvider == null ? const <String, String>{} : await headersProvider!();
+      final res = await _client
+          .post(Uri.parse(url), headers: {...headers, ...dynamicHeaders}, body: jsonEncode(payload))
+          .timeout(timeout);
       return res.statusCode >= 200 && res.statusCode < 300;
     } catch (_) {
       return false;

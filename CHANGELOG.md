@@ -1,3 +1,10 @@
+## 0.3.0
+
+- `OtlpExporter(headersProvider: ...)`: same rotating-header support as
+  `HttpJsonExporter` — resolve headers fresh on every export. Lets you send OTLP
+  through an authenticated gateway (bearer token) that later becomes a direct
+  collector endpoint with no format change.
+
 ## 0.2.0
 
 - `Observability.trace(name, body)`: time an async operation as a span — slow
