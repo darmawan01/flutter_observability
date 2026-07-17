@@ -41,9 +41,11 @@ class HttpJsonExporter extends Exporter {
       'signals': batch.map((s) => s.toJson()).toList(),
     });
     try {
+      // Time out the headers await too — a headersProvider backed by slow/flaky
+      // storage can otherwise hang `export` forever and wedge the flush loop.
       final dynamicHeaders = headersProvider == null
           ? const <String, String>{}
-          : await headersProvider!();
+          : await headersProvider!().timeout(timeout);
       final res = await _client
           .post(endpoint, headers: {...headers, ...dynamicHeaders}, body: body)
           .timeout(timeout);

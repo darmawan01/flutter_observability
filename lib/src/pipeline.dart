@@ -28,6 +28,13 @@ class Pipeline {
   final int batchSize;
   final int maxQueue;
   final Duration flushInterval;
+
+  /// Hard bound on a single `exporter.export()` call. Belt-and-suspenders: even
+  /// if an exporter hangs (e.g. an un-timed network or storage read inside it), a
+  /// flush can never get stuck forever and silently stop all telemetry — the call
+  /// is abandoned, the batch is retried next cycle, and `_flushing` is released.
+  final Duration exportTimeout;
+
   final void Function(String message)? onDebug;
 
   /// Durable backing for the offline queue. Defaults to a no-op in-memory store.
@@ -61,6 +68,7 @@ class Pipeline {
     this.batchSize = 50,
     this.maxQueue = 1000,
     this.flushInterval = const Duration(seconds: 10),
+    this.exportTimeout = const Duration(seconds: 30),
     this.onDebug,
     QueueStore? store,
     this.persistDebounce = const Duration(milliseconds: 250),
@@ -130,7 +138,7 @@ class Pipeline {
           final batch = _queue.sublist(_cursor[i], end);
           bool ok;
           try {
-            ok = await exporters[i].export(batch, resource);
+            ok = await exporters[i].export(batch, resource).timeout(exportTimeout);
           } catch (err) {
             ok = false;
             onDebug?.call('exporter ${exporters[i].runtimeType} threw: $err');

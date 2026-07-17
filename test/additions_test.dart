@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter_observability/flutter_observability.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -130,6 +132,38 @@ void main() {
       final s = (span['spans'] as List).first as Map;
       expect(s['traceId'], '0af7651916cd43dd8448eb211c80319c');
       expect(s['spanId'], 'b7ad6b7169203331'); // verbatim — no regeneration
+    });
+  });
+
+  group('OtlpExporter headersProvider timeout (regression)', () {
+    // A headersProvider backed by slow/flaky storage (e.g. secure storage for an
+    // auth token) must not be able to hang `export` forever — that used to wedge
+    // the pipeline's `_flushing` guard and silently stop ALL telemetry.
+    test('export returns false (not hang) when headersProvider never completes',
+        () async {
+      final exporter = OtlpExporter(
+        endpoint: 'http://127.0.0.1:9/aware3/otlp', // unreachable; never posts
+        headersProvider: () => Completer<Map<String, String>>().future, // hangs
+        timeout: const Duration(milliseconds: 100),
+      );
+      final span = Signal(
+        kind: SignalKind.span,
+        name: 'op',
+        timestamp: DateTime.fromMillisecondsSinceEpoch(1700000000000),
+        endTimestamp: DateTime.fromMillisecondsSinceEpoch(1700000001000),
+        traceId: '0af7651916cd43dd8448eb211c80319c',
+        spanId: 'b7ad6b7169203331',
+        ok: true,
+      );
+
+      // Guard: if the fix regresses, the headers await hangs and this whole call
+      // never completes — the outer timeout turns that into a clear failure.
+      final ok = await exporter
+          .export([span], const Resource({'service.name': 't'}))
+          .timeout(const Duration(seconds: 2),
+              onTimeout: () => throw StateError('export() hung on headersProvider'));
+
+      expect(ok, isFalse); // deferred for retry, pipeline stays unwedged
     });
   });
 }

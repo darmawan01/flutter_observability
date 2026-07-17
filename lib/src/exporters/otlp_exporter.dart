@@ -86,8 +86,13 @@ class OtlpExporter extends Exporter {
 
   Future<bool> _post(String url, Map<String, Object?> payload) async {
     try {
-      final dynamicHeaders =
-          headersProvider == null ? const <String, String>{} : await headersProvider!();
+      // The headers await needs its own timeout: a headersProvider that reads
+      // from slow/flaky storage (e.g. secure storage for an auth token) can hang,
+      // and without a bound here `export` never returns — which permanently wedges
+      // the pipeline's `_flushing` guard and silently stops ALL telemetry.
+      final dynamicHeaders = headersProvider == null
+          ? const <String, String>{}
+          : await headersProvider!().timeout(timeout);
       final res = await _client
           .post(Uri.parse(url), headers: {...headers, ...dynamicHeaders}, body: jsonEncode(payload))
           .timeout(timeout);

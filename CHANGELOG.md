@@ -1,3 +1,13 @@
+## 0.4.0
+
+- Fix: telemetry could silently stop forever after a single stalled export. The
+  `headersProvider` await in `OtlpExporter`/`HttpJsonExporter` had no timeout, so
+  a slow/flaky read (e.g. secure storage for an auth token) hung `export()`, which
+  left the pipeline's `_flushing` guard stuck and no-op'd every future flush.
+  Header resolution is now bounded by the exporter `timeout`, and the pipeline
+  wraps each `export()` in a new `exportTimeout` (default 30s) as defense-in-depth
+  so no exporter can ever wedge the flush loop.
+
 ## 0.3.0
 
 - `OtlpExporter(headersProvider: ...)`: same rotating-header support as
